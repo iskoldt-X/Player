@@ -304,20 +304,23 @@
         
         async function loadTrackFromPlaylist(index, autoPlay = true) {
             if (index >= 0 && index < playlist.length) {
-                isPlayingFromPlaylist = true; // 标记来自播放列表
-                currentTrackIndex = index; // 更新云端列表的当前索引
+                isPlayingFromPlaylist = true; 
+                currentTrackIndex = index; 
                 const track = playlist[index];
 
-                if (currentObjectURL) { // 如果之前在播放本地文件，释放它
+                if (currentObjectURL) { 
                     URL.revokeObjectURL(currentObjectURL);
                     currentObjectURL = null;
                 }
                 
-                audioPlayer.src = track.url;
+                // 音频播放仍然直接使用 R2 URL，这样可以利用浏览器的流式播放和缓存
+                // 不会等待整个文件下载完才开始播放音频
+                audioPlayer.src = track.url; 
                 resetPlayerForNewTrack(track.title || track.url.split('/').pop()); 
                 
-                displayMessageInLyrics("正在从云端加载歌词...");
-                await fetchLyricsFromRemoteUrl(track.url); // 尝试从远程MP3读取歌词
+                // 异步下载 MP3 文件以读取歌词
+                // 这个过程不会阻塞音频的加载和播放
+                fetchMp3AndReadLyrics(track.url); // 注意这里不再 await，让它在后台进行
 
                 audioPlayer.load(); 
                 if (autoPlay) { 
@@ -327,7 +330,7 @@
                     }
                 } else { updatePlayIcon(); }
                 updatePlaylistUISelection(index);
-                if(uploadOverlay) uploadOverlay.style.display = 'none'; // 播放列表歌曲时隐藏上传
+                if(uploadOverlay) uploadOverlay.style.display = 'none'; 
             }
         }
 
@@ -339,35 +342,79 @@
             parsedLyrics = []; lyricOffset = 0; currentLyricIndex = -1;
             if(lyricsContainer) lyricsContainer.innerHTML = '<div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">准备加载歌词...</div>';
         }
-
-        async function fetchLyricsFromRemoteUrl(mp3Url) {
-            return new Promise((resolve) => {
-                window.jsmediatags.read(mp3Url, {
-                    onSuccess: function(tag) {
-                        let lyricsText = '';
-                        if (tag.tags.lyrics) { 
-                            lyricsText = (typeof tag.tags.lyrics === 'object' ? tag.tags.lyrics.lyrics : tag.tags.lyrics);
-                        } else if (tag.tags.USLT) { 
-                             lyricsText = (typeof tag.tags.USLT === 'object' ? tag.tags.USLT.lyrics : tag.tags.USLT);
-                        }
-                        if (lyricsText && typeof lyricsText === 'string' && lyricsText.trim()) {
-                            parseLyrics(lyricsText.trim());
-                        } else {
-                            parsedLyrics = []; lyricOffset = 0;
-                        }
-                        renderLyrics();
-                        resolve();
-                    },
-                    onError: function(error) {
-                        console.error(`从 ${mp3Url} 读取内嵌歌词失败:`, error);
-                        parsedLyrics = []; lyricOffset = 0;
-                        renderLyrics(); // 显示无歌词提示
-                        resolve(); // 即使失败也 resolve，不阻塞播放
-                    }
-                });
-            });
-        }
         
+        async function fetchMp3AndReadLyrics(mp3Url) {
+            console.log(`Attempting to download MP3 from: ${mp3Url} to read embedded lyrics.`);
+            displayMessageInLyrics(`正在下载 ${mp3Url.split('/').pop()} 以读取歌词...`); 
+
+            try {
+                const response = await fetch(mp3Url); 
+                if (!response.ok) {
+                    throw new Error(`HTTP error fetching MP3! Status: ${response.status} - ${response.statusText}`);
+                }
+                const arrayBuffer = await response.arrayBuffer(); 
+                const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' }); 
+
+                console.log(`Successfully downloaded MP3 as blob from ${mp3Url}. Size: ${blob.size} bytes. Now reading tags...`);
+
+                return new Promise((resolve) => {
+                    if (!window.jsmediatags) {
+                        console.error("jsmediatags library is not loaded.");
+                        parsedLyrics = []; lyricOffset = 0; renderLyrics(); resolve(); return;
+                    }
+                    window.jsmediatags.read(blob, {
+                        onSuccess: function(tag) {
+                            console.log(`Successfully read tags from MP3 blob (${mp3Url}):`, JSON.parse(JSON.stringify(tag))); // 日志输出读取到的所有标签
+                            let lyricsText = '';
+                            
+                            // 优先尝试从 USLT 标签获取歌词
+                            if (tag.tags.USLT) {
+                                // jsmediatags 可能将 USLT 数据包装在 .data 对象中，或者直接作为 USLT 标签的值
+                                const usltData = tag.tags.USLT.data || tag.tags.USLT; 
+                                if (usltData && typeof usltData.lyrics === 'string') {
+                                    lyricsText = usltData.lyrics;
+                                }
+                                console.log("Found USLT data object:", usltData); // 打印 USLT 数据对象
+                                console.log("Extracted lyricsText from USLT:", lyricsText ? lyricsText.substring(0,100) + "..." : "null/empty");
+                            
+                            // 如果 USLT 中没有，或者 USLT 标签不存在，尝试非标准的 'lyrics' 标签
+                            } else if (tag.tags.lyrics) { 
+                                if (typeof tag.tags.lyrics === 'string') {
+                                    lyricsText = tag.tags.lyrics;
+                                    console.log("Found 'lyrics' tag (string):", lyricsText ? lyricsText.substring(0,100) + "..." : "null/empty");
+                                } else if (typeof tag.tags.lyrics === 'object' && typeof tag.tags.lyrics.lyrics === 'string') {
+                                    // 兼容某些工具可能将 lyrics 也存为对象 { descriptor: '...', lyrics: '...' }
+                                    lyricsText = tag.tags.lyrics.lyrics;
+                                    console.log("Found 'lyrics' tag (object with .lyrics property):", lyricsText ? lyricsText.substring(0,100) + "..." : "null/empty");
+                                }
+                            } else {
+                                console.log(`No USLT or 'lyrics' tag found in MP3 blob from ${mp3Url}. Available tags:`, Object.keys(tag.tags));
+                            }
+                            
+                            if (lyricsText && lyricsText.trim()) {
+                                console.log("Passing to parseLyrics (first 100 chars):", lyricsText.trim().substring(0,100) + "...");
+                                parseLyrics(lyricsText.trim());
+                            } else {
+                                console.log("lyricsText is empty or null after attempting to extract from tags, clearing parsedLyrics.");
+                                parsedLyrics = []; lyricOffset = 0;
+                            }
+                            renderLyrics();
+                            resolve();
+                        },
+                        onError: function(error) {
+                            console.error(`从 MP3 blob (${mp3Url}) 读取标签失败:`, error);
+                            parsedLyrics = []; lyricOffset = 0; renderLyrics(); 
+                            resolve();
+                        }
+                    });
+                });
+
+            } catch (error) {
+                console.error(`下载 MP3 (${mp3Url}) 失败:`, error);
+                parsedLyrics = []; lyricOffset = 0; renderLyrics(); 
+                return Promise.resolve(); 
+            }
+        }
         // 本地文件选择处理 (恢复并调整)
         function handleFileSelect(event) {
             const file = event.target.files[0];
