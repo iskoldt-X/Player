@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地MP3播放器 (专业版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+          darkMode: 'class', // 确保 Tailwind JIT 模式知道使用 class 策略
+          theme: {
+            extend: {
+              maxWidth: { // 如果你使用了 max-w-9xl 但默认没有，可以在这里添加
+                '9xl': '96rem', // 1536px
+              }
+            }
+          }
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <style>
+        /* ... (你的 CSS 样式保持不变) ... */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        input[type="file"]::-webkit-file-upload-button,
+        input[type="file"]::file-selector-button {
+            display: none;
+        }
+        .lyrics-container::-webkit-scrollbar { width: 8px; }
+        .lyrics-container::-webkit-scrollbar-track { background: #f1f5f9; }
+        .lyrics-container::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+        /*滚动条样式*/
+        .dark .lyrics-container::-webkit-scrollbar-track { background: #000000; }
+        .dark .lyrics-container::-webkit-scrollbar-thumb { background: #475569; }
+
+        /*未选中歌词的颜色 */
+        .lyrics-container p {
+            padding: 10px 16px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            text-align: center;
+             color: #000000; 
+        }
+        .dark .lyrics-container p {
+             color: #c4c4c4; 
+        }
+        .lyrics-container p[data-time]:hover {
+            background-color: #f0f9ff; 
+            cursor: pointer;
+        }
+        .dark .lyrics-container p[data-time]:hover {
+            background-color: #8f2020; 
+        }
+        /* Active line highlight */
+        .lyrics-container p.active {
+            background-color: #e0f2fe; color: #0c4a6e;
+            font-weight: 700; transform: scale(1.02);
+        }
+        .dark .lyrics-container p.active {
+            background-color: #2a1e25; color: #ffffff;
+        }
+        input[type="range"] {
+            -webkit-appearance: none; appearance: none;
+            width: 100%; height: 6px;
+            background: #e2e8f0; 
+            border-radius: 3px; outline: none;
+            opacity: 0.7; transition: opacity .2s;
+        }
+        input[type="range"]:hover { opacity: 1; }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 16px; height: 16px;
+            background: #000000; 
+            cursor: pointer; border-radius: 50%;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 16px; height: 16px;
+            background: #3b82f6; 
+            cursor: pointer; border-radius: 50%;
+        }
+        /*<!-- 进度条 --> */
+        .dark input[type="range"] {
+            background: #261f1f; 
+        }
+        /*<!-- 进度条滑块 --> */
+        .dark input[type="range"]::-webkit-slider-thumb {
+            background: #c44b18; 
+        }
+
+        .dark input[type="range"]::-moz-range-thumb {
+            background: #a7c61d; 
+        }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-900">
+
+    <div id="main-container" class="w-11/12 max-w-7xl h-full mx-auto bg-white dark:bg-black/80 rounded-xl shadow-2xl flex flex-col p-4 sm:p-6 transition-colors duration-300">
+        
+        <div id="upload-overlay" class="absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-center z-20 p-4">
+             <label for="fileInput" class="w-full max-w-md cursor-pointer bg-blue-50 hover:bg-blue-100 dark:bg-slate-700 dark:hover:bg-slate-600 border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-lg flex flex-col items-center justify-center py-16 transition">
+                <svg class="w-16 h-16 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                <span class="mt-4 text-lg font-semibold text-blue-700 dark:text-blue-300">点击此处选择 MP3 文件</span>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">所有处理均在您的浏览器本地完成</p>
+            </label>
+        </div>
+        <input type="file" id="fileInput" class="hidden" accept=".mp3">
+
+        <header class="text-center py-2 flex-shrink-0 flex items-center justify-between px-2 sm:px-0">
+            <div class="w-1/3 flex items-center"> <!-- 音量控制区域 -->
+                <button id="muteBtn" type="button" aria-label="静音" class="p-2 rounded-full text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                    <svg id="volumeIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
+                    <svg id="muteIcon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 sm:h-6 sm:w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l2-2m0 0l2-2m-2 2l-2 2m2-2l2 2" />
+                    </svg>
+                </button>
+                <input type="range" id="volume-slider" aria-label="音量" min="0" max="1" value="1" step="0.01" class="w-20 sm:w-24 ml-2">
+            </div>
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-800 dark:text-slate-100 truncate flex-grow text-center w-1/3" id="fileName">本地 MP3 播放器</h1>
+            <div class="w-1/3 flex justify-end">
+                <button id="theme-toggle" type="button" aria-label="切换深色模式" class="p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-slate-800 dark:focus:ring-blue-400 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors">
+                    <svg id="theme-icon-light" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                    </svg>
+                    <svg id="theme-icon-dark" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 sm:h-6 sm:w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <main id="lyrics-section" class="flex-grow flex flex-col my-4 overflow-hidden bg-transparent"> 
+            <div id="lyricsContainer" class="lyrics-container flex-grow overflow-auto text-base sm:text-lg leading-relaxed sm:leading-loose text-slate-700 dark:text-slate-300 bg-transparent">
+                <div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">请先选择一个文件...</div>
+            </div>
+            <div class="flex items-center justify-center space-x-4 mt-3 flex-shrink-0">
+                <span class="text-sm text-slate-500 dark:text-slate-400">字体:</span>
+                <button id="font-decrease" type="button" aria-label="减小歌词字号" class="w-8 h-8 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 rounded-full font-bold text-slate-600 dark:text-slate-300 transition-colors">-</button>
+                <button id="font-increase" type="button" aria-label="增大歌词字号" class="w-8 h-8 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 rounded-full font-bold text-slate-600 dark:text-slate-300 transition-colors">+</button>
+            </div>
+        </main>
+        
+        <footer class="flex-shrink-0 space-y-4">
+             <div class="space-y-2">
+                <input type="range" id="progress-bar" aria-label="播放进度" min="0" max="100" value="0" step="0.1">
+                <div class="flex justify-between text-xs font-mono text-slate-500 dark:text-slate-400">
+                    <span id="current-time">00:00</span>
+                    <span id="total-time">00:00</span>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2 w-1/3">
+                    <label for="speed-slider" id="speed-label-text" class="text-xs text-slate-500 dark:text-slate-400">速度</label>
+                    <input type="range" id="speed-slider" aria-labelledby="speed-label-text" min="0.5" max="2" value="1" step="0.01" class="w-full">
+                    <span id="speed-display" class="text-xs font-mono text-slate-600 dark:text-slate-300 w-10 text-center">1.00x</span>
+                </div>
+                
+                <div class="flex items-center justify-center w-1/3">
+                    <button id="playPauseBtn" type="button" aria-label="播放" class="bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white w-16 h-16 rounded-full shadow-lg flex items-center justify-center transition transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg id="playIcon" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                        <svg id="pauseIcon" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor" class="hidden"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>
+                    </button>
+                </div>
+                <div class="w-1/3"></div>
+            </div>
+        </footer>
+
+        <audio id="audioPlayer" class="hidden"></audio>
+    </div>
+
+    <script>
+        // DOM 元素引用
+        const audioPlayer = document.getElementById('audioPlayer');
+        const fileInput = document.getElementById('fileInput');
+        const uploadOverlay = document.getElementById('upload-overlay');
+        const fileNameDisplay = document.getElementById('fileName');
+        const lyricsContainer = document.getElementById('lyricsContainer');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const playIcon = document.getElementById('playIcon');
+        const pauseIcon = document.getElementById('pauseIcon');
+        const progressBar = document.getElementById('progress-bar');
+        const currentTimeDisplay = document.getElementById('current-time');
+        const totalTimeDisplay = document.getElementById('total-time');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedDisplay = document.getElementById('speed-display');
+        const fontIncreaseBtn = document.getElementById('font-increase');
+        const fontDecreaseBtn = document.getElementById('font-decrease');
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const themeIconLight = document.getElementById('theme-icon-light');
+        const themeIconDark = document.getElementById('theme-icon-dark');
+        const volumeSlider = document.getElementById('volume-slider');
+        const muteBtn = document.getElementById('muteBtn');
+        const volumeIcon = document.getElementById('volumeIcon');
+        const muteIcon = document.getElementById('muteIcon');
+        
+        // 状态变量
+        let parsedLyrics = [];
+        let lyricOffset = 0; // For [offset:...] in LRC
+        let currentLyricIndex = -1;
+        let isSeeking = false;
+        let currentObjectURL = null;
+        let previousVolume = 1;
+
+
+        // --- 主题切换逻辑 (与之前相同) ---
+
+        function applyTheme(isDark) {
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+                if(themeIconLight) themeIconLight.classList.add('hidden');
+                if(themeIconDark) themeIconDark.classList.remove('hidden');
+                if(themeToggleBtn) themeToggleBtn.setAttribute('aria-label', '切换浅色模式');
+            } else {
+                document.documentElement.classList.remove('dark');
+                if(themeIconLight) themeIconLight.classList.remove('hidden');
+                if(themeIconDark) themeIconDark.classList.add('hidden');
+                if(themeToggleBtn) themeToggleBtn.setAttribute('aria-label', '切换深色模式');
+            }
+        }
+        function toggleTheme() {
+            const isCurrentlyDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('theme', !isCurrentlyDark ? 'dark' : 'light');
+            applyTheme(!isCurrentlyDark);
+        }
+        function initializeTheme() {
+            const storedTheme = localStorage.getItem('theme');
+            const prefersDarkScheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (storedTheme === 'dark' || (!storedTheme && prefersDarkScheme)) {
+                applyTheme(true);
+            } else {
+                applyTheme(false); 
+            }
+        }
+
+        // --- 音量控制 ---
+        function handleVolumeChange() {
+            const volume = parseFloat(volumeSlider.value);
+            audioPlayer.volume = volume;
+            audioPlayer.muted = volume === 0;
+            updateMuteButton(audioPlayer.muted, volume);
+            localStorage.setItem('playerVolume', volume);
+            if (volume > 0) {
+                previousVolume = volume; // Store last non-zero volume
+            }
+        }
+
+        function toggleMute() {
+            if (audioPlayer.muted || audioPlayer.volume === 0) {
+                audioPlayer.muted = false;
+                audioPlayer.volume = previousVolume > 0 ? previousVolume : 0.5; // Restore previous or default
+                volumeSlider.value = audioPlayer.volume;
+            } else {
+                previousVolume = audioPlayer.volume; // Store before muting
+                audioPlayer.muted = true;
+                audioPlayer.volume = 0; // Visually set slider to 0
+                volumeSlider.value = 0;
+            }
+            updateMuteButton(audioPlayer.muted, audioPlayer.volume);
+            localStorage.setItem('playerVolume', audioPlayer.volume);
+            localStorage.setItem('playerMuted', audioPlayer.muted);
+        }
+        
+        function updateMuteButton(muted, volume) {
+            const isEffectivelyMuted = muted || volume === 0;
+            if (volumeIcon) volumeIcon.classList.toggle('hidden', isEffectivelyMuted);
+            if (muteIcon) muteIcon.classList.toggle('hidden', !isEffectivelyMuted);
+            if (muteBtn) muteBtn.setAttribute('aria-label', isEffectivelyMuted ? '取消静音' : '静音');
+        }
+
+        function initializeVolume() {
+            const storedVolume = localStorage.getItem('playerVolume');
+            const storedMuted = localStorage.getItem('playerMuted') === 'true';
+            
+            let initialVolume = 1;
+            if (storedVolume !== null) {
+                initialVolume = parseFloat(storedVolume);
+            }
+            
+            audioPlayer.volume = initialVolume;
+            volumeSlider.value = initialVolume;
+            previousVolume = initialVolume > 0 ? initialVolume : 1; // Set previousVolume
+
+            if (storedMuted && initialVolume === 0) { // If was muted and volume was 0
+                 audioPlayer.muted = true;
+            } else if (initialVolume === 0) { // If volume was just 0
+                 audioPlayer.muted = true; // Effectively muted
+            } else {
+                 audioPlayer.muted = storedMuted; // Use stored muted state if volume > 0
+            }
+            
+            updateMuteButton(audioPlayer.muted, audioPlayer.volume);
+        }
+
+
+        // --- 事件监听 ---
+        fileInput.addEventListener('change', handleFileSelect);
+        playPauseBtn.addEventListener('click', togglePlayPause);
+        audioPlayer.addEventListener('play', updatePlayIcon);
+        audioPlayer.addEventListener('pause', updatePlayIcon);
+        audioPlayer.addEventListener('ended', handleAudioEnded);
+        audioPlayer.addEventListener('timeupdate', handleTimeUpdate);
+        audioPlayer.addEventListener('loadedmetadata', handleMetadataLoaded);
+        audioPlayer.addEventListener('error', handleAudioError);
+        audioPlayer.addEventListener('volumechange', () => { // Reflect external volume changes
+            if (audioPlayer.volume !== parseFloat(volumeSlider.value)) {
+                volumeSlider.value = audioPlayer.volume;
+            }
+            updateMuteButton(audioPlayer.muted, audioPlayer.volume);
+        });
+        
+        // Progress Bar Seeking (Bug Fix #1)
+        function endSeek() {
+            if (!audioPlayer.duration || !isSeeking) return; // Only if currently seeking
+            isSeeking = false; // Set false *before* handleSeek to allow timeupdate in handleSeek if needed
+            handleSeek();
+        }
+        progressBar.addEventListener('input', () => {
+            if (audioPlayer.duration) {
+                isSeeking = true;
+                const time = (progressBar.value / 100) * audioPlayer.duration;
+                currentTimeDisplay.textContent = formatTime(time);
+            }
+        });
+        progressBar.addEventListener('change', endSeek); // Primarily for keyboard/accessibility
+        progressBar.addEventListener('mouseup', endSeek);
+        progressBar.addEventListener('touchend', endSeek, { passive: true }); // passive for performance
+        progressBar.addEventListener('mousedown', () => { if (audioPlayer.duration) isSeeking = true; });
+
+
+        speedSlider.addEventListener('input', handleSpeedChange);
+        fontIncreaseBtn.addEventListener('click', () => changeFontSize(1));
+        fontDecreaseBtn.addEventListener('click', () => changeFontSize(-1));
+        if(themeToggleBtn) themeToggleBtn.addEventListener('click', toggleTheme);
+        if(volumeSlider) volumeSlider.addEventListener('input', handleVolumeChange);
+        if(muteBtn) muteBtn.addEventListener('click', toggleMute);
+
+        // Keyboard Shortcuts (Extra)
+        document.addEventListener('keydown', (e) => {
+            // Ignore if typing in an input, textarea, or contenteditable
+            const targetTagName = e.target.tagName.toLowerCase();
+            if (targetTagName === 'input' || targetTagName === 'textarea' || e.target.isContentEditable) {
+                return;
+            }
+            if (!audioPlayer.src || audioPlayer.readyState < HTMLMediaElement.HAVE_METADATA) return;
+
+            switch (e.key) {
+                case ' ': // Space for Play/Pause
+                    e.preventDefault();
+                    togglePlayPause();
+                    break;
+                case 'ArrowLeft': // Seek back
+                    e.preventDefault();
+                    if (audioPlayer.duration) audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 5);
+                    break;
+                case 'ArrowRight': // Seek forward
+                    e.preventDefault();
+                    if (audioPlayer.duration) audioPlayer.currentTime = Math.min(audioPlayer.duration, audioPlayer.currentTime + 5);
+                    break;
+                case 'm': // Mute/Unmute
+                case 'M':
+                    e.preventDefault();
+                    toggleMute();
+                    break;
+                // Add more shortcuts if needed (e.g., ArrowUp/Down for volume)
+            }
+        });
+
+        // Memory Leak Fix for Object URL (Bug Fix #3)
+        window.addEventListener('beforeunload', () => {
+            if (currentObjectURL) {
+                URL.revokeObjectURL(currentObjectURL);
+            }
+        });
+
+
+        // --- 功能函数 ---
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                if (currentObjectURL) {
+                    URL.revokeObjectURL(currentObjectURL);
+                }
+                currentObjectURL = URL.createObjectURL(file);
+                
+                audioPlayer.src = currentObjectURL;
+                fileNameDisplay.textContent = file.name;
+                uploadOverlay.style.display = 'none';
+                resetPlayer();
+                loadLyrics(file);
+                audioPlayer.load(); // Triggers loadedmetadata
+                // Bug Fix #2: Clear file input value
+                fileInput.value = ''; 
+            }
+        }
+
+        function togglePlayPause() { /* ... (之前的实现，但可以简化 ended 处理) ... */
+            if (!audioPlayer.src || audioPlayer.readyState < HTMLMediaElement.HAVE_METADATA) {
+                if(fileInput.files.length === 0 && uploadOverlay.style.display !== 'none'){
+                     fileInput.click();
+                }
+                return;
+            }
+            if (audioPlayer.ended) { 
+                audioPlayer.currentTime = 0;
+            }
+            // `play()` or `pause()` will trigger their respective events, which call updatePlayIcon
+            audioPlayer.paused ? audioPlayer.play() : audioPlayer.pause();
+        }
+
+
+        function updatePlayIcon() {
+            // audioPlayer.ended is also a paused state
+            const isEffectivelyPaused = audioPlayer.paused || audioPlayer.ended;
+            playIcon.classList.toggle('hidden', !isEffectivelyPaused);
+            pauseIcon.classList.toggle('hidden', isEffectivelyPaused);
+            playPauseBtn.setAttribute('aria-label', isEffectivelyPaused ? '播放' : '暂停');
+        }
+
+        function handleAudioEnded() {
+            updatePlayIcon(); 
+            if (audioPlayer.duration) {
+                 currentTimeDisplay.textContent = formatTime(audioPlayer.duration);
+                 progressBar.value = 100;
+            }
+            // No need to reset currentLyricIndex here, timeupdate will handle it or it'll stay on last line
+        }
+
+
+        function handleTimeUpdate() {
+            if (!isSeeking && audioPlayer.duration) {
+                progressBar.value = (audioPlayer.currentTime / audioPlayer.duration) * 100 || 0;
+            }
+            if(!isSeeking){ // Only update display if not actively seeking via slider
+                currentTimeDisplay.textContent = formatTime(audioPlayer.currentTime);
+            }
+            updateLyricHighlight();
+        }
+        
+        function handleMetadataLoaded() {
+            totalTimeDisplay.textContent = formatTime(audioPlayer.duration);
+            progressBar.value = 0;
+            playPauseBtn.disabled = false;
+            initializeVolume(); // Initialize volume after metadata is loaded (duration known)
+        }
+        
+        function handleSeek() {
+            if (audioPlayer.duration) {
+                const targetTime = (progressBar.value / 100) * audioPlayer.duration;
+                audioPlayer.currentTime = targetTime;
+                // If paused, timeupdate won't fire automatically to update lyrics.
+                if (audioPlayer.paused) {
+                    updateLyricHighlight(); 
+                    currentTimeDisplay.textContent = formatTime(targetTime); // Also update display
+                }
+            }
+        }
+        
+        // Speed change, Font size change, formatTime (与之前类似)
+        function handleSpeedChange() { /* ... */ }
+        function changeFontSize(amount) { /* ... */ }
+        function formatTime(seconds) { /* ... */ }
+        // (粘贴之前的 handleSpeedChange, changeFontSize, formatTime 实现)
+        function handleSpeedChange() {
+            const speed = parseFloat(speedSlider.value);
+            audioPlayer.playbackRate = speed;
+            speedDisplay.textContent = speed.toFixed(2) + 'x';
+        }
+        function changeFontSize(amount) {
+            const currentSize = parseFloat(window.getComputedStyle(lyricsContainer).fontSize);
+            const newSize = currentSize + amount;
+            if (newSize >= 10 && newSize <= 40) { // Keep reasonable limits
+                 lyricsContainer.style.fontSize = newSize + 'px';
+            }
+        }
+        function formatTime(seconds) {
+            const floorSeconds = Math.floor(seconds || 0);
+            const min = Math.floor(floorSeconds / 60);
+            const sec = floorSeconds % 60;
+            return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+        }
+        
+        // Lyric Parsing (Bug Fix #4)
+        function parseLyrics(text) {
+            parsedLyrics = []; // Reset global parsedLyrics
+            lyricOffset = 0; // Reset global offset
+            const lines = text.split('\n');
+            // Regex for [mm:ss.xx(x)] or [mm:ss] and [offset:...]
+            const timeRegex = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\](.*)/;
+            const offsetRegex = /\[offset:\s*([+-]?\d+)\]/i;
+
+            for (const line of lines) {
+                const offsetMatch = offsetRegex.exec(line);
+                if (offsetMatch) {
+                    lyricOffset = parseInt(offsetMatch[1]) / 1000; // Offset in seconds
+                    continue; // Process next line
+                }
+
+                const match = timeRegex.exec(line.trim());
+                if (match) {
+                    const minutes = parseInt(match[1]);
+                    const seconds = parseInt(match[2]);
+                    const millisecondsString = match[3] ? match[3].padEnd(3, '0') : '000';
+                    // Ensure millisecondsString is not too long if original was e.g. .1234
+                    const milliseconds = parseInt(millisecondsString.substring(0,3)); 
+                    
+                    let time = minutes * 60 + seconds + milliseconds / 1000;
+                    // Apply offset at the end, after sorting by original time
+                    // time += lyricOffset; // Apply offset later
+
+                    const textContent = match[4].trim();
+                    if (textContent) { // Only add if there's text
+                        parsedLyrics.push({ time, text: textContent });
+                    }
+                }
+            }
+            // Sort by original time before applying offset
+            parsedLyrics.sort((a, b) => a.time - b.time);
+            // Now apply offset if it exists
+            if (lyricOffset !== 0) {
+                parsedLyrics.forEach(line => line.time += lyricOffset);
+                // Filter out negative times after offset
+                parsedLyrics = parsedLyrics.filter(line => line.time >=0);
+            }
+            return parsedLyrics; // Return for direct use if needed, but it's also global
+        }
+
+
+        function renderLyrics(lyrics) { // lyrics argument is actually global parsedLyrics
+            lyricsContainer.innerHTML = '';
+            if (parsedLyrics.length === 0) { // Use global parsedLyrics
+                lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">未找到有效的时间标签歌词。</div>`;
+                return;
+            }
+            parsedLyrics.forEach((line, index) => {
+                const p = document.createElement('p');
+                p.textContent = line.text;
+                p.dataset.time = line.time;
+                p.dataset.index = index;
+                p.addEventListener('click', handleLyricLineClick); 
+                lyricsContainer.appendChild(p);
+            });
+        }
+
+        function handleLyricLineClick(event) { /* ... (与之前类似，但注意 audioPlayer.readyState) ... */
+            if (!audioPlayer.src || audioPlayer.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || parsedLyrics.length === 0) { // HAVE_CURRENT_DATA or higher
+                return;
+            }
+            // (粘贴之前的 handleLyricLineClick 实现，确保它使用全局的 parsedLyrics)
+            const targetLine = event.currentTarget;
+            const timeString = targetLine.dataset.time;
+            const indexString = targetLine.dataset.index;
+
+            if (timeString !== undefined && indexString !== undefined) {
+                const time = parseFloat(timeString);
+                const newClickedIndex = parseInt(indexString);
+
+                if (!isNaN(time) && time >= 0 && time <= audioPlayer.duration && !isNaN(newClickedIndex)) {
+                    audioPlayer.currentTime = time;
+                    
+                    // Force update lyric highlight immediately
+                    const allLineElements = lyricsContainer.querySelectorAll('p[data-index]');
+                    if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) {
+                         allLineElements[currentLyricIndex].classList.remove('active');
+                    }
+                    targetLine.classList.add('active');
+                    currentLyricIndex = newClickedIndex; // Update global currentLyricIndex
+                    
+                    targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    if (audioPlayer.paused) {
+                        audioPlayer.play(); 
+                    }
+                }
+            }
+        }
+        
+        // Lyric Highlight & Scrolling (Bug Fix #5)
+        function updateLyricHighlight() {
+            if (!parsedLyrics.length || !audioPlayer.duration || isSeeking) return;
+            const currentTime = audioPlayer.currentTime; // Offset already applied to parsedLyrics[i].time
+            
+            let newIndex = -1;
+            for (let i = parsedLyrics.length - 1; i >= 0; i--) {
+                // Add a small tolerance (e.g., 0.3s) for smoother transition
+                if (parsedLyrics[i].time <= currentTime + 0.3) { 
+                    newIndex = i;
+                    break;
+                }
+            }
+            // If currentTime is before the first lyric
+            if (newIndex === -1 && parsedLyrics.length > 0 && currentTime < parsedLyrics[0].time) {
+                newIndex = -1; // Or 0 if you want the first line highlighted before it starts
+            }
+
+
+            if (newIndex !== currentLyricIndex) {
+                const allLineElements = lyricsContainer.querySelectorAll('p[data-index]');
+                if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) {
+                    allLineElements[currentLyricIndex].classList.remove('active');
+                }
+                
+                currentLyricIndex = newIndex;
+                
+                if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) {
+                    const currentLineElement = allLineElements[currentLyricIndex];
+                    currentLineElement.classList.add('active');
+                    
+                    // Bug Fix #5: Improved scroll condition
+                    const containerRect = lyricsContainer.getBoundingClientRect();
+                    const lineRect = currentLineElement.getBoundingClientRect();
+                    const lineHeight = lineRect.height;
+
+                    // Check if the center of the line is within 0.75 * lineHeight from the center of the container
+                    const lineCenterY = lineRect.top + lineHeight / 2;
+                    const containerCenterY = containerRect.top + containerRect.height / 2;
+                    
+                    const isCenteredEnough = Math.abs(lineCenterY - containerCenterY) < (lineHeight * 0.75);
+
+                    if (!isCenteredEnough) {
+                        currentLineElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            }
+        }
+        
+        function loadLyrics(file) {
+            window.jsmediatags.read(file, {
+                onSuccess: function(tag) {
+                    let lyricsText = '';
+                    if (tag.tags.lyrics) { // Standard ID3v2.3+ USLT
+                        lyricsText = (typeof tag.tags.lyrics === 'object' ? tag.tags.lyrics.lyrics : tag.tags.lyrics);
+                    } else if (tag.tags.USLT) { // Another common way for lyrics
+                         lyricsText = (typeof tag.tags.USLT === 'object' ? tag.tags.USLT.lyrics : tag.tags.USLT);
+                    } else if (tag.tags.LYR) { // Older/less common
+                         lyricsText = (typeof tag.tags.LYR === 'object' ? tag.tags.LYR.lyrics : tag.tags.LYR);
+                    }
+                    
+                    if (lyricsText && lyricsText.trim()) {
+                        parseLyrics(lyricsText.trim()); // parseLyrics updates global parsedLyrics
+                    } else {
+                        parsedLyrics = []; // Ensure it's empty
+                        lyricOffset = 0;
+                    }
+                    renderLyrics(); // renderLyrics uses global parsedLyrics
+                },
+                onError: (error) => {
+                    console.error('Error reading MP3 tags:', error);
+                    lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-red-500 p-4 text-center">读取歌词信息失败。<br>尝试播放无歌词的音频。</div>`;
+                    parsedLyrics = [];
+                    lyricOffset = 0;
+                    renderLyrics();
+                }
+            });
+        }
+        
+        function resetPlayer() { /* ... (与之前类似) ... */
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+            // updatePlayIcon will be called by pause event
+            playPauseBtn.disabled = true;
+            
+            progressBar.value = 0;
+            currentTimeDisplay.textContent = '00:00';
+            totalTimeDisplay.textContent = '00:00';
+            
+            if(speedSlider) speedSlider.value = 1; // Check if element exists for robustness
+            audioPlayer.playbackRate = 1;
+            if(speedDisplay) speedDisplay.textContent = '1.00x';
+            
+            lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">正在加载音频...</div>`;
+            if (lyricsContainer.style.fontSize) { // Only reset if set
+                lyricsContainer.style.fontSize = ''; 
+            }
+            parsedLyrics = [];
+            lyricOffset = 0;
+            currentLyricIndex = -1;
+            isSeeking = false; // Ensure seeking state is reset
+        }
+
+        function handleAudioError(e) { /* ... (与之前类似) ... */ }
+        function resetPlayerUIForError() { /* ... (与之前类似) ... */ }
+        // (粘贴之前的 handleAudioError, resetPlayerUIForError 实现)
+        function handleAudioError(e) {
+            console.error("Audio Player Error:", audioPlayer.error, e);
+            let errorMessage = "播放音频时发生未知错误。";
+            if (audioPlayer.error) {
+                switch (audioPlayer.error.code) {
+                    case MediaError.MEDIA_ERR_ABORTED: errorMessage = "音频播放已中止。"; break;
+                    case MediaError.MEDIA_ERR_NETWORK: errorMessage = "加载音频时发生网络错误。"; break;
+                    case MediaError.MEDIA_ERR_DECODE: errorMessage = "音频解码错误。<br>文件可能已损坏或格式不受支持。"; break;
+                    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED: errorMessage = "音频源或格式不受支持。"; break;
+                    default: errorMessage = `发生未知音频错误 (代码: ${audioPlayer.error.code})。`;
+                }
+            }
+            lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-red-500 p-4 text-center">${errorMessage}</div>`;
+            if(fileNameDisplay) fileNameDisplay.textContent = "播放错误";
+            resetPlayerUIForError();
+        }
+        function resetPlayerUIForError() {
+            audioPlayer.pause();
+            updatePlayIcon();
+            if(playPauseBtn) playPauseBtn.disabled = true;
+            if(progressBar) progressBar.value = 0;
+            if(currentTimeDisplay) currentTimeDisplay.textContent = '00:00';
+        }
+
+        // --- 初始加载 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeTheme();
+            // initializeVolume(); // Moved to handleMetadataLoaded for robustness
+            if(playPauseBtn) playPauseBtn.disabled = true; 
+        });
+
+    </script>
+</body>
+</html>
