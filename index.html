@@ -471,7 +471,35 @@
         function updateLyricHighlight() { /* ... (你的原版实现) ... */ }
         (function() { // 立即执行函数封装这些不变的函数
             parseLyrics = function(text) { parsedLyrics = []; lyricOffset = 0; const lines = text.split('\n'); const timeRegex = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\](.*)/; const offsetRegex = /\[offset:\s*([+-]?\d+)\]/i; for (const line of lines) { const offsetMatch = offsetRegex.exec(line); if (offsetMatch) { lyricOffset = parseInt(offsetMatch[1]) / 1000; continue; } const match = timeRegex.exec(line.trim()); if (match) { const minutes = parseInt(match[1]); const seconds = parseInt(match[2]); const millisecondsString = match[3] ? match[3].padEnd(3, '0') : '000'; const milliseconds = parseInt(millisecondsString.substring(0,3)); let time = minutes * 60 + seconds + milliseconds / 1000; const textContent = match[4].trim(); if (textContent) { parsedLyrics.push({ time, text: textContent }); } } } parsedLyrics.sort((a, b) => a.time - b.time); if (lyricOffset !== 0) { parsedLyrics.forEach(line => line.time += lyricOffset); parsedLyrics = parsedLyrics.filter(line => line.time >=0); } };
-            renderLyrics = function() { lyricsContainer.innerHTML = ''; if (parsedLyrics.length === 0) { lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">（此歌曲暂无歌词或加载失败）</div>`; return; } parsedLyrics.forEach((line, index) => { const p = document.createElement('p'); p.textContent = line.text; p.dataset.time = line.time; p.dataset.index = index; p.addEventListener('click', handleLyricLineClick); lyricsContainer.appendChild(p); }); updateLyricHighlight(); };
+            renderLyrics = function() {
+                lyricsContainer.innerHTML = '';
+                if (parsedLyrics.length === 0) {
+                    lyricsContainer.innerHTML = `<div class="flex h-full items-center justify-center text-slate-400 dark:text-slate-500">（此歌曲暂无歌词或加载失败）</div>`;
+                    return;
+                }
+                parsedLyrics.forEach((line, index) => {
+                    const p = document.createElement('p');
+                    const text = line.text;
+                    const slashIndex = text.indexOf('/');
+
+                    if (slashIndex !== -1) {
+                        const part1 = text.substring(0, slashIndex).trim();
+                        const part2 = text.substring(slashIndex + 1).trim();
+                        // 安全地创建文本节点和换行符，避免 XSS
+                        p.appendChild(document.createTextNode(part1));
+                        p.appendChild(document.createElement('br'));
+                        p.appendChild(document.createTextNode(part2));
+                    } else {
+                        p.textContent = text;
+                    }
+
+                    p.dataset.time = line.time;
+                    p.dataset.index = index;
+                    p.addEventListener('click', handleLyricLineClick);
+                    lyricsContainer.appendChild(p);
+                });
+                updateLyricHighlight();
+            };
             handleLyricLineClick = function(event) { if (!audioPlayer.src || audioPlayer.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || parsedLyrics.length === 0) return; const targetLine = event.currentTarget; const timeString = targetLine.dataset.time; const indexString = targetLine.dataset.index; if (timeString !== undefined && indexString !== undefined) { const time = parseFloat(timeString); const newClickedIndex = parseInt(indexString); if (!isNaN(time) && time >= 0 && time <= audioPlayer.duration && !isNaN(newClickedIndex)) { audioPlayer.currentTime = time; const allLineElements = lyricsContainer.querySelectorAll('p[data-index]'); if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) { allLineElements[currentLyricIndex].classList.remove('active'); } targetLine.classList.add('active'); currentLyricIndex = newClickedIndex; targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (audioPlayer.paused) { audioPlayer.play(); } } } };
             updateLyricHighlight = function() { if (!parsedLyrics.length || !audioPlayer.duration || isSeeking) return; const currentTime = audioPlayer.currentTime; let newIndex = -1; for (let i = parsedLyrics.length - 1; i >= 0; i--) { if (parsedLyrics[i].time <= currentTime + 0.3) { newIndex = i; break; } } if (newIndex === -1 && parsedLyrics.length > 0 && currentTime < parsedLyrics[0].time) { newIndex = -1; } if (newIndex !== currentLyricIndex) { const allLineElements = lyricsContainer.querySelectorAll('p[data-index]'); if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) { allLineElements[currentLyricIndex].classList.remove('active'); } currentLyricIndex = newIndex; if (currentLyricIndex > -1 && allLineElements[currentLyricIndex]) { const currentLineElement = allLineElements[currentLyricIndex]; currentLineElement.classList.add('active'); const containerRect = lyricsContainer.getBoundingClientRect(); const lineRect = currentLineElement.getBoundingClientRect(); const lineHeight = lineRect.height; const lineCenterY = lineRect.top + lineHeight / 2; const containerCenterY = containerRect.top + containerRect.height / 2; const isCenteredEnough = Math.abs(lineCenterY - containerCenterY) < (lineHeight * 0.75); if (!isCenteredEnough) { currentLineElement.scrollIntoView({ behavior: 'smooth', block: 'center' }); } } } };
         })();
