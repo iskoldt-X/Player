@@ -191,6 +191,7 @@
         let previousVolume = 1;
         let isInFocusMode = false;
 
+        let wakeLockSentinel = null; // 屏幕唤醒锁
         // --- 主题和音量控制函数 (保持不变) ---
         function applyTheme(isDark) { /* ... */ }
         function toggleTheme() { /* ... */ }
@@ -221,14 +222,31 @@
             focusToggleBtn.addEventListener('click', toggleFocusMode);
         }
         playPauseBtn.addEventListener('click', togglePlayPause);
-        audioPlayer.addEventListener('play', () => {
+        audioPlayer.addEventListener('play', async () => {
             updatePlayIcon();
             // 在小屏幕上播放时自动进入专注模式
             if (window.innerWidth < 768 && !isInFocusMode) {
                 setFocusMode(true);
             }
+            // 申请屏幕唤醒锁
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLockSentinel = await navigator.wakeLock.request('screen');
+                    wakeLockSentinel.addEventListener('release', () => {
+                        wakeLockSentinel = null;
+                    });
+                } catch (err) {
+                    console.error(`无法获取屏幕唤醒锁: ${err.name}, ${err.message}`);
+                }
+            }
         });
-        audioPlayer.addEventListener('pause', updatePlayIcon);
+        audioPlayer.addEventListener('pause', () => {
+            updatePlayIcon();
+            // 释放屏幕唤醒锁
+            if (wakeLockSentinel) {
+                wakeLockSentinel.release();
+            }
+        });
         audioPlayer.addEventListener('ended', handleAudioEnded);
         audioPlayer.addEventListener('timeupdate', handleTimeUpdate);
         audioPlayer.addEventListener('loadedmetadata', handleMetadataLoaded);
